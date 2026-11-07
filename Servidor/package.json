@@ -1,0 +1,32 @@
+{
+  "name": "servidor-siga",
+  "version": "2.0.0",
+  "description": "Servidor API REST para el Sistema Inteligente de Gestión de Asistencias (SIGA)",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js",
+    "dev": "node --watch app.js",
+    "db:init": "node database/initDb.js",
+    "test:ws": "node testWsFlow.js"
+  },
+  "keywords": [
+    "siga",
+    "asistencias",
+    "qr",
+    "arduino",
+    "express",
+    "mysql"
+  ],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "eslint": "^9.38.0"
+  },
+  "dependencies": {
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "morgan": "^1.10.1",
+    "mysql2": "^3.16.3",
+    "ws": "^8.22.1"
+  }
+}

@@ -1,0 +1,38 @@
+# Dependencias de Node.js
+node_modules/
+**/node_modules/
+
+# Variables de entorno y credenciales privadas (sí se sube .env.example)
+.env
+**/.env
+!.env.example
+!**/.env.example
+
+# Fotos temporales capturadas por Arduino o códigos QR temporales
+Servidor/temp_photos/
+**/temp_photos/
+
+# Archivos de Visual Studio / VS Code / compilación temporal
+.vs/
+**/.vs/
+obj/
+**/obj/
+bin/
+**/bin/
+*.user
+*.suo
+
+# Caché de Python
+__pycache__/
+**/__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Archivos del sistema operativo y logs
+.DS_Store
+Thumbs.db
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
