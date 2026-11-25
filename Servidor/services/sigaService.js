@@ -45,27 +45,34 @@ async function registerOrUpdateStudent(data) {
         throw err;
     }
 
-    const query = `
-        INSERT INTO alumnos (numero_control, nombre_completo, chat_id_telegram, qr_enviado)
-        VALUES (?, ?, ?, 0)
-        ON DUPLICATE KEY UPDATE
-            nombre_completo = VALUES(nombre_completo),
-            chat_id_telegram = COALESCE(VALUES(chat_id_telegram), chat_id_telegram),
-            qr_enviado = 0
-    `;
+    // Verificar si el alumno ya existe para no consumir un nuevo ID
+    const existente = await getStudentByControlNumber(numero_control);
 
-    await pool.execute(query, [
-        numero_control,
-        nombre_completo,
-        chat_id_telegram
-    ]);
+    if (existente) {
+        await pool.execute(
+            `UPDATE alumnos
+             SET nombre_completo = ?,
+                 chat_id_telegram = COALESCE(?, chat_id_telegram),
+                 qr_enviado = 0
+             WHERE numero_control = ?`,
+            [nombre_completo, chat_id_telegram, numero_control]
+        );
+    } else {
+        // Calcular el siguiente id_alumno estrictamente consecutivo (1, 2, 3...)
+        // para evitar los saltos de bloques de 4000 en TiDB Cloud Serverless
+        const [maxRows] = await pool.execute(
+            'SELECT COALESCE(MAX(id_alumno), 0) + 1 AS next_id FROM alumnos'
+        );
+        const nextId = Number(maxRows[0].next_id) || 1;
 
-    const [rows] = await pool.execute(
-        'SELECT id_alumno, numero_control, nombre_completo, chat_id_telegram, qr_enviado, fecha_registro FROM alumnos WHERE numero_control = ?',
-        [numero_control]
-    );
+        await pool.execute(
+            `INSERT INTO alumnos (id_alumno, numero_control, nombre_completo, chat_id_telegram, qr_enviado)
+             VALUES (?, ?, ?, ?, 0)`,
+            [nextId, numero_control, nombre_completo, chat_id_telegram]
+        );
+    }
 
-    return rows[0];
+    return await getStudentByControlNumber(numero_control);
 }
 
 /**
@@ -248,10 +255,16 @@ async function verifyTokenAndCreateAttendance({ token, estado = 'presente', obse
         };
     }
 
-    const [insertResult] = await pool.execute(
-        `INSERT INTO asistencias (id_alumno, numero_control, fecha, hora, estado, dispositivo_origen, observaciones)
-         VALUES (?, ?, CURRENT_DATE, CURRENT_TIME, ?, 'arduino_qr', ?)`,
-        [alumno.id_alumno, alumno.numero_control, estado, observaciones]
+    // Calcular el siguiente id_asistencia consecutivo (1, 2, 3...)
+    const [maxAsist] = await pool.execute(
+        'SELECT COALESCE(MAX(id_asistencia), 0) + 1 AS next_id FROM asistencias'
+    );
+    const nextAsistenciaId = Number(maxAsist[0].next_id) || 1;
+
+    await pool.execute(
+        `INSERT INTO asistencias (id_asistencia, id_alumno, numero_control, fecha, hora, estado, dispositivo_origen, observaciones)
+         VALUES (?, ?, ?, CURRENT_DATE, CURRENT_TIME, ?, 'arduino_qr', ?)`,
+        [nextAsistenciaId, alumno.id_alumno, alumno.numero_control, estado, observaciones]
     );
 
     const [asistenciaRows] = await pool.execute(
@@ -267,7 +280,7 @@ async function verifyTokenAndCreateAttendance({ token, estado = 'presente', obse
             a.observaciones
          FROM asistencias a
          WHERE a.id_asistencia = ?`,
-        [insertResult.insertId]
+        [nextAsistenciaId]
     );
 
     const asistencia = asistenciaRows[0];
