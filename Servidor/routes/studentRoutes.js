@@ -23,8 +23,9 @@ router.post('/:numero_control/qr-generado', rawImageParser, studentController.re
 router.put('/:numero_control/qr-enviado', studentController.markQrSent);
 router.post('/:numero_control/qr-enviado', studentController.markQrSent);
 
-// 6. Consultas generales de alumnos
+// 6. Consultas generales y eliminación de alumnos
 router.get('/', studentController.getAllStudents);
 router.get('/:numero_control', studentController.getStudentByControlNumber);
+router.delete('/:numero_control', studentController.deleteStudent);
 
 module.exports = router;

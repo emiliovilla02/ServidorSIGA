@@ -237,6 +237,44 @@ async function receiveGeneratedQrFromDesktop(req, res) {
     }
 }
 
+/**
+ * DELETE /api/alumnos/:numero_control
+ * Elimina un alumno por su número de control y notifica en tiempo real al Cliente Web (React).
+ */
+async function deleteStudent(req, res) {
+    try {
+        const { numero_control } = req.params;
+        const eliminado = await sigaService.deleteStudentByControlNumber(numero_control);
+
+        if (!eliminado) {
+            return res.status(404).json({
+                success: false,
+                msg: `Alumno con número de control "${numero_control}" no encontrado.`
+            });
+        }
+
+        wsManager.broadcastToModules(['web'], {
+            tipo: 'alumno_eliminado',
+            id_alumno: eliminado.id_alumno,
+            numero_control: eliminado.numero_control,
+            alumno: eliminado
+        });
+
+        return res.status(200).json({
+            success: true,
+            msg: `Alumno ${eliminado.nombre_completo} (${eliminado.numero_control}) eliminado correctamente.`,
+            alumno: eliminado
+        });
+    } catch (error) {
+        console.error('[studentController.deleteStudent] Error:', error);
+        return res.status(500).json({
+            success: false,
+            msg: 'Error al eliminar el alumno.',
+            error: error.message
+        });
+    }
+}
+
 module.exports = {
     registerStudent,
     getPendingQrStudents,
@@ -244,5 +282,6 @@ module.exports = {
     markQrSent,
     receiveGeneratedQrFromDesktop,
     getAllStudents,
-    getStudentByControlNumber
+    getStudentByControlNumber,
+    deleteStudent
 };

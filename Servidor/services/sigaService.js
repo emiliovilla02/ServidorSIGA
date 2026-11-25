@@ -2,21 +2,39 @@ const { pool } = require('../config/db');
 
 /**
  * Registra un alumno nuevo únicamente con numero_control y nombre_completo
- * (el id_alumno se asigna automáticamente de uno en uno en la base de datos).
+ * en formato "Apellidos Nombre(s)" (el id_alumno se asigna automáticamente de 1 en 1).
  */
 async function registerOrUpdateStudent(data) {
     const numero_control = String(
         data.numero_control || data.no_control || data.matricula || ''
     ).trim();
-    const nombre_completo = String(
-        data.nombre_completo || data.nombre || ''
-    ).trim();
+
+    // Soportar tanto "apellidos" + "nombre(s)" separados como "nombre_completo" directo ("Apellidos Nombre(s)")
+    const apellidos = String(data.apellidos || data.apellido || '').trim();
+    const nombres = String(data.nombres || (apellidos ? data.nombre || '' : '')).trim();
+
+    let nombre_completo = '';
+    if (apellidos && nombres) {
+        nombre_completo = `${apellidos} ${nombres}`;
+    } else {
+        nombre_completo = String(
+            data.nombre_completo || data.nombre || ''
+        ).trim();
+    }
+    nombre_completo = nombre_completo.replace(/\s+/g, ' ');
+
     const chat_id_telegram = data.chat_id_telegram
         ? String(data.chat_id_telegram).trim()
         : null;
 
     if (!numero_control || !nombre_completo) {
-        const err = new Error('Los campos "numero_control" y "nombre_completo" son obligatorios.');
+        const err = new Error('Los campos "numero_control" y "nombre_completo" (Apellidos y Nombre) son obligatorios.');
+        err.statusCode = 400;
+        throw err;
+    }
+
+    if (nombre_completo.split(' ').length < 2) {
+        const err = new Error('El registro debe incluir Apellidos y después Nombre(s) (ej. "Vazquez Esquivel Kevin Isai").');
         err.statusCode = 400;
         throw err;
     }
@@ -48,6 +66,23 @@ async function registerOrUpdateStudent(data) {
     );
 
     return rows[0];
+}
+
+/**
+ * Elimina un alumno por su numero_control (y sus asistencias en cascada).
+ * Devuelve los datos del alumno eliminado o null si no existía.
+ */
+async function deleteStudentByControlNumber(numero_control) {
+    const cleanControl = String(numero_control || '').trim();
+    if (!cleanControl) return null;
+
+    const alumno = await getStudentByControlNumber(cleanControl);
+    if (!alumno) {
+        return null;
+    }
+
+    await pool.execute('DELETE FROM alumnos WHERE numero_control = ?', [cleanControl]);
+    return alumno;
 }
 
 /**
@@ -87,11 +122,11 @@ async function markQrSent(numero_control, chat_id_telegram = null) {
 }
 
 /**
- * Lista todos los alumnos registrados ordenados por id_alumno
+ * Lista todos los alumnos registrados ordenados alfabéticamente por Apellidos y Nombre(s)
  */
 async function getAllStudents() {
     const [rows] = await pool.execute(
-        'SELECT id_alumno, numero_control, nombre_completo, chat_id_telegram, qr_enviado, fecha_registro FROM alumnos ORDER BY id_alumno ASC'
+        'SELECT id_alumno, numero_control, nombre_completo, chat_id_telegram, qr_enviado, fecha_registro FROM alumnos ORDER BY nombre_completo ASC'
     );
     return rows;
 }
@@ -153,7 +188,7 @@ async function getAttendanceSummaryByStudent() {
         FROM alumnos a
         LEFT JOIN asistencias asist ON a.id_alumno = asist.id_alumno
         GROUP BY a.id_alumno, a.numero_control, a.nombre_completo
-        ORDER BY a.id_alumno ASC
+        ORDER BY a.nombre_completo ASC
     `);
     return rows;
 }
@@ -296,6 +331,7 @@ async function getAttendances(filters = {}) {
 
 module.exports = {
     registerOrUpdateStudent,
+    deleteStudentByControlNumber,
     getPendingQrStudents,
     getLatestStudent,
     markQrSent,

@@ -330,7 +330,7 @@ async function handleIncomingWsMessage(ws, rawData, isBinary) {
             // 1. COMANDOS DE TELEGRAM DEL MAESTRO (Vía Android)
             // ----------------------------------------------------------------
 
-            // 1.1 MAESTRO: Registrar alumno (sin chat_id del alumno aún, o con chat_id_telegram si se envía)
+            // 1.1 MAESTRO: Registrar alumno (Formato: Apellidos y después Nombre(s))
             case 'registrar_alumno': {
                 if (ws.modulo === 'desconocido') ws.modulo = 'android';
 
@@ -338,7 +338,19 @@ async function handleIncomingWsMessage(ws, rawData, isBinary) {
                     return responderATelegram(ws, chatId, '⛔ Solo el maestro puede registrar alumnos.');
                 }
 
-                const alumno = await sigaService.registerOrUpdateStudent(datos);
+                let alumno;
+                try {
+                    alumno = await sigaService.registerOrUpdateStudent(datos);
+                } catch (regErr) {
+                    if (chatId) {
+                        responderATelegram(ws, chatId, `⚠️ ${regErr.message}`);
+                    }
+                    return sendJson(ws, {
+                        tipo: 'error',
+                        success: false,
+                        msg: regErr.message
+                    });
+                }
 
                 // Si viene desde un comando de Telegram con chat_id del maestro, enviar respuesta_telegram
                 if (chatId) {
@@ -360,6 +372,71 @@ async function handleIncomingWsMessage(ws, rawData, isBinary) {
                 // Si el alumno ya trae chat_id_telegram vinculado, pedir QR a Escritorio de inmediato;
                 // siempre notificar en vivo al Cliente Web (React).
                 notifyStudentRegistered(alumno, Boolean(alumno.chat_id_telegram));
+                break;
+            }
+
+            // 1.1b MAESTRO: Borrar / Eliminar alumno por número de control
+            case 'borrar_alumno':
+            case 'eliminar_alumno':
+            case 'baja_alumno': {
+                if (ws.modulo === 'desconocido') ws.modulo = 'android';
+
+                if (!esChatDeMaestro(chatId)) {
+                    return responderATelegram(ws, chatId, '⛔ Solo el maestro puede eliminar alumnos.');
+                }
+
+                const numero_control = String(
+                    datos.numero_control || datos.no_control || datos.matricula || message.numero_control || ''
+                ).trim();
+
+                if (!numero_control) {
+                    return responderATelegram(
+                        ws,
+                        chatId,
+                        '⚠️ Indica el número de control del alumno a borrar.'
+                    );
+                }
+
+                const eliminado = await sigaService.deleteStudentByControlNumber(numero_control);
+
+                if (!eliminado) {
+                    if (chatId) {
+                        responderATelegram(
+                            ws,
+                            chatId,
+                            `❌ No se encontró ningún alumno con el número de control ${numero_control}.`
+                        );
+                    }
+                    return sendJson(ws, {
+                        tipo: 'alumno_eliminado_ack',
+                        success: false,
+                        numero_control,
+                        msg: `No se encontró ningún alumno con el número de control ${numero_control}.`
+                    });
+                }
+
+                if (chatId) {
+                    responderATelegram(
+                        ws,
+                        chatId,
+                        `🗑️ Alumno ${eliminado.nombre_completo} (${eliminado.numero_control}) eliminado correctamente.`
+                    );
+                }
+
+                sendJson(ws, {
+                    tipo: 'alumno_eliminado_ack',
+                    success: true,
+                    msg: 'Alumno eliminado correctamente.',
+                    alumno: eliminado
+                });
+
+                // Notificar en tiempo real al Cliente Web (React) para quitarlo de la tabla
+                broadcastToModules(['web'], {
+                    tipo: 'alumno_eliminado',
+                    id_alumno: eliminado.id_alumno,
+                    numero_control: eliminado.numero_control,
+                    alumno: eliminado
+                });
                 break;
             }
 
@@ -763,6 +840,8 @@ async function handleIncomingWsMessage(ws, rawData, isBinary) {
                     eventos_validos: [
                         'identificar',
                         'registrar_alumno',
+                        'borrar_alumno',
+                        'eliminar_alumno',
                         'listar_alumnos',
                         'reporte_asistencias',
                         'vincular_alumno',

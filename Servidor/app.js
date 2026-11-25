@@ -34,13 +34,14 @@ app.get('/', (req, res) => {
         eventos_websocket: {
             identificacion: '{ "tipo": "identificar", "modulo": "android | desktop | arduino | web" }',
             flujo_registro_alumno: {
-                android_envia_registro: '{ "tipo": "registrar_alumno", "chat_id": "7155239838", "numero_control": "22070319", "nombre_completo": "Kevin Isai Vazquez Esquivel" }',
+                android_envia_registro: '{ "tipo": "registrar_alumno", "chat_id": "7155239838", "numero_control": "22070319", "nombre_completo": "Vazquez Esquivel Kevin Isai" }',
+                android_borra_alumno: '{ "tipo": "borrar_alumno", "chat_id": "7155239838", "numero_control": "22070319" }',
                 alumno_vincula_chat: '{ "tipo": "vincular_alumno", "chat_id": "987654321", "numero_control": "22070319" }',
                 android_solicita_miqr: '{ "tipo": "solicitar_qr", "chat_id": "987654321" }',
-                desktop_recibe_orden: '{ "tipo": "nuevo_alumno_qr", "alumno": { "id_alumno": 1, "numero_control": "22070319", "nombre_completo": "..." } }',
+                desktop_recibe_orden: '{ "tipo": "nuevo_alumno_qr", "alumno": { "id_alumno": 1, "numero_control": "22070319", "nombre_completo": "Vazquez Esquivel Kevin Isai" } }',
                 desktop_envia_imagen_qr: '{ "tipo": "qr_generado", "numero_control": "22070319", "imagen_qr_base64": "<base64>" }',
                 android_recibe_qr_para_telegram: '{ "tipo": "enviar_qr_telegram", "numero_control": "22070319", "chat_id": "987654321", "imagen_qr_base64": "<base64>" }',
-                react_recibe: '{ "tipo": "alumno_registrado", "alumno": { ... } }'
+                react_recibe: '{ "tipo": "alumno_registrado | alumno_eliminado", "alumno": { ... } }'
             },
             flujo_asistencia: {
                 arduino_envia: 'Trama binaria JPEG o JSON { "tipo": "captura_qr", "imagen": "<base64>" }',
