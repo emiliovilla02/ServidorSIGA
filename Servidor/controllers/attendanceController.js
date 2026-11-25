@@ -105,12 +105,15 @@ async function getPendingPhotoForDesktop(req, res) {
  */
 async function verifyQrTokenAndRegisterAttendance(req, res) {
     try {
-        const token = req.body.token || req.body.numero_control || req.body.no_control;
+        const body = req.body || {};
+        const datos = body.datos || body.data || body;
         const result = await sigaService.verifyTokenAndCreateAttendance({
-            token,
-            estado: req.body.estado || 'presente',
-            observaciones: req.body.observaciones || null,
-            error: req.body.error || null
+            token: datos.token || body.token || datos.qr,
+            numero_control: datos.numero_control || datos.no_control || body.numero_control,
+            chat_id_telegram: datos.chat_id_telegram || datos.chat_id || body.chat_id_telegram || body.chat_id,
+            estado: datos.estado || body.estado || 'presente',
+            observaciones: datos.observaciones || body.observaciones || null,
+            error: datos.error || body.error || null
         });
 
         wsManager.notifyAttendanceResult(result.statusCode === 201 ? 200 : result.statusCode, result.payload);

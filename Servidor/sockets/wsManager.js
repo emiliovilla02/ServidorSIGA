@@ -775,9 +775,10 @@ async function handleIncomingWsMessage(ws, rawData, isBinary) {
             case 'enviar_token': {
                 if (ws.modulo === 'desconocido') ws.modulo = 'desktop';
 
-                const token = datos.token || datos.numero_control || datos.no_control || message.token;
                 const result = await sigaService.verifyTokenAndCreateAttendance({
-                    token,
+                    token: datos.token || message.token || datos.qr || message.qr,
+                    numero_control: datos.numero_control || datos.no_control || message.numero_control,
+                    chat_id_telegram: datos.chat_id_telegram || datos.chat_id || message.chat_id_telegram || message.chat_id,
                     estado: datos.estado || 'presente',
                     observaciones: datos.observaciones || null,
                     error: datos.error || message.error || null

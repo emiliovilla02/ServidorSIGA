@@ -46,7 +46,7 @@ app.get('/', (req, res) => {
             flujo_asistencia: {
                 arduino_envia: 'Trama binaria JPEG o JSON { "tipo": "captura_qr", "imagen": "<base64>" }',
                 desktop_recibe: '{ "tipo": "decodificar_foto_qr", "imagen_base64": "<base64>" }',
-                desktop_envia_token: '{ "tipo": "verificar_qr", "token": "22070319" }',
+                desktop_envia_datos_qr: '{ "tipo": "verificar_qr", "numero_control": "23070039", "chat_id_telegram": "8868902263" }',
                 arduino_recibe: '{ "tipo": "resultado_asistencia", "success": true/false, "led": "VERDE | ROJO" }',
                 react_recibe: '{ "tipo": "nueva_asistencia", "alumno": { ... }, "asistencia": { ... } }'
             },

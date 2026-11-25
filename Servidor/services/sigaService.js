@@ -220,13 +220,51 @@ async function getAttendancesByStudentId(id_alumno) {
 }
 
 /**
- * Verifica si el token (numero_control) decodificado del QR pertenece a un alumno
- * y, de ser así, inserta el registro de asistencia en la BD.
+ * Extrae { numero_control, chat_id_telegram } desde cualquier formato que envíe
+ * la App de Escritorio tras decodificar el QR:
+ * 1) Campos directos: { numero_control: "23070039", chat_id_telegram: "8868902263" }
+ * 2) String JSON dentro de token/qr: { token: '{"numero_control":"23070039","chat_id_telegram":"8868902263"}' }
+ * 3) Objeto dentro de token/datos: { token: { numero_control: "23070039", chat_id_telegram: "8868902263" } }
+ * 4) String simple: { token: "23070039" }
  */
-async function verifyTokenAndCreateAttendance({ token, estado = 'presente', observaciones = null, error = null }) {
-    const cleanToken = String(token || '').trim();
+function parseQrPayload(input = {}) {
+    let numero_control = input.numero_control || input.no_control || input.matricula || null;
+    let chat_id_telegram = input.chat_id_telegram || input.chat_id || null;
+    const rawToken = input.token !== undefined ? input.token : input.qr_data || input.qr;
 
-    if (!cleanToken || error) {
+    if (rawToken && typeof rawToken === 'object') {
+        numero_control = numero_control || rawToken.numero_control || rawToken.no_control || rawToken.matricula || null;
+        chat_id_telegram = chat_id_telegram || rawToken.chat_id_telegram || rawToken.chat_id || null;
+    } else if (typeof rawToken === 'string') {
+        const trimmed = rawToken.trim();
+        if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+            try {
+                const parsed = JSON.parse(trimmed);
+                numero_control = numero_control || parsed.numero_control || parsed.no_control || parsed.matricula || null;
+                chat_id_telegram = chat_id_telegram || parsed.chat_id_telegram || parsed.chat_id || null;
+            } catch (_) {
+                numero_control = numero_control || trimmed;
+            }
+        } else if (!numero_control && trimmed) {
+            numero_control = trimmed;
+        }
+    }
+
+    return {
+        numero_control: numero_control ? String(numero_control).trim() : '',
+        chat_id_telegram: chat_id_telegram ? String(chat_id_telegram).trim() : ''
+    };
+}
+
+/**
+ * Verifica si los datos decodificados del QR (numero_control y chat_id_telegram)
+ * pertenecen a un alumno registrado en la BD y registra la asistencia.
+ */
+async function verifyTokenAndCreateAttendance(input = {}) {
+    const { estado = 'presente', observaciones = null, error = null } = input;
+    const { numero_control, chat_id_telegram } = parseQrPayload(input);
+
+    if (!numero_control || error) {
         return {
             found: false,
             statusCode: 400,
@@ -239,7 +277,8 @@ async function verifyTokenAndCreateAttendance({ token, estado = 'presente', obse
         };
     }
 
-    const alumno = await getStudentByControlNumber(cleanToken);
+    // Buscar al alumno en la base de datos por numero_control
+    let alumno = await getStudentByControlNumber(numero_control);
 
     if (!alumno) {
         return {
@@ -249,10 +288,34 @@ async function verifyTokenAndCreateAttendance({ token, estado = 'presente', obse
                 tipo: 'resultado_asistencia',
                 success: false,
                 led: 'ROJO',
-                msg: `No se encontró ningún alumno con el número de control "${cleanToken}".`,
-                token_recibido: cleanToken
+                msg: `No se encontró ningún alumno con el número de control "${numero_control}".`,
+                numero_control,
+                chat_id_telegram: chat_id_telegram || null
             }
         };
+    }
+
+    // Si el QR trae chat_id_telegram, validamos que coincida con el del alumno en la BD
+    if (chat_id_telegram) {
+        if (alumno.chat_id_telegram && String(alumno.chat_id_telegram).trim() !== chat_id_telegram) {
+            return {
+                found: false,
+                statusCode: 403,
+                payload: {
+                    tipo: 'resultado_asistencia',
+                    success: false,
+                    led: 'ROJO',
+                    msg: `El chat_id_telegram (${chat_id_telegram}) no coincide con el registrado para el alumno ${numero_control}.`,
+                    numero_control,
+                    chat_id_telegram
+                }
+            };
+        }
+
+        // Si el alumno aún no tenía su chat_id_telegram guardado en la BD, lo actualizamos
+        if (!alumno.chat_id_telegram) {
+            alumno = await linkStudentTelegramChat(numero_control, chat_id_telegram);
+        }
     }
 
     // Calcular el siguiente id_asistencia consecutivo (1, 2, 3...)
@@ -296,7 +359,8 @@ async function verifyTokenAndCreateAttendance({ token, estado = 'presente', obse
             alumno: {
                 id_alumno: alumno.id_alumno,
                 numero_control: alumno.numero_control,
-                nombre_completo: alumno.nombre_completo
+                nombre_completo: alumno.nombre_completo,
+                chat_id_telegram: alumno.chat_id_telegram
             },
             asistencia
         }
