@@ -239,10 +239,13 @@ function notifyAttendanceResult(statusCode, payload) {
         broadcastToModules(['arduino'], payload);
     }
 
-    broadcastToModules(['web'], {
-        tipo: payload.success ? 'nueva_asistencia' : 'intento_asistencia_fallido',
-        ...payload
-    });
+    // Si la asistencia ya estaba registrada hoy, no enviamos un duplicado "nueva_asistencia" a React Web
+    if (!payload.ya_registrada) {
+        broadcastToModules(['web'], {
+            tipo: payload.success ? 'nueva_asistencia' : 'intento_asistencia_fallido',
+            ...payload
+        });
+    }
 }
 
 /**

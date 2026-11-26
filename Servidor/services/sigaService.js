@@ -318,6 +318,46 @@ async function verifyTokenAndCreateAttendance(input = {}) {
         }
     }
 
+    // Verificar si el alumno YA tiene asistencia registrada el día de hoy
+    const [existingToday] = await pool.execute(
+        `SELECT
+            a.id_asistencia,
+            a.id_alumno,
+            a.numero_control,
+            DATE_FORMAT(a.fecha, '%Y-%m-%d') AS fecha,
+            a.hora,
+            a.fecha_hora,
+            a.estado,
+            a.dispositivo_origen,
+            a.observaciones
+         FROM asistencias a
+         WHERE a.id_alumno = ? AND a.fecha = CURRENT_DATE
+         LIMIT 1`,
+        [alumno.id_alumno]
+    );
+
+    if (existingToday.length > 0) {
+        return {
+            found: true,
+            alreadyRegistered: true,
+            statusCode: 200,
+            payload: {
+                tipo: 'resultado_asistencia',
+                success: true,
+                ya_registrada: true,
+                led: 'VERDE',
+                msg: 'El alumno ya cuenta con asistencia registrada el día de hoy.',
+                alumno: {
+                    id_alumno: alumno.id_alumno,
+                    numero_control: alumno.numero_control,
+                    nombre_completo: alumno.nombre_completo,
+                    chat_id_telegram: alumno.chat_id_telegram
+                },
+                asistencia: existingToday[0]
+            }
+        };
+    }
+
     // Calcular el siguiente id_asistencia consecutivo (1, 2, 3...)
     const [maxAsist] = await pool.execute(
         'SELECT COALESCE(MAX(id_asistencia), 0) + 1 AS next_id FROM asistencias'
