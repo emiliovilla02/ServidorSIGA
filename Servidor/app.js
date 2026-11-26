@@ -44,11 +44,13 @@ app.get('/', (req, res) => {
                 react_recibe: '{ "tipo": "alumno_registrado | alumno_eliminado", "alumno": { ... } }'
             },
             flujo_asistencia: {
+                iniciar_temporizador_android: '{ "tipo": "iniciar_temporizador_asistencia", "chat_id": "7155239838", "minutos": 10 }',
+                cerrar_inmediato_android: '{ "tipo": "cerrar_asistencia", "chat_id": "7155239838" }',
                 arduino_envia: 'Trama binaria JPEG o JSON { "tipo": "captura_qr", "imagen": "<base64>" }',
                 desktop_recibe: '{ "tipo": "decodificar_foto_qr", "imagen_base64": "<base64>" }',
                 desktop_envia_datos_qr: '{ "tipo": "verificar_qr", "numero_control": "23070039", "chat_id_telegram": "8868902263" }',
                 arduino_recibe: '{ "tipo": "resultado_asistencia", "success": true/false, "led": "VERDE | ROJO" }',
-                react_recibe: '{ "tipo": "nueva_asistencia", "alumno": { ... }, "asistencia": { ... } }'
+                react_recibe: '{ "tipo": "nueva_asistencia | cierre_asistencia", "alumno": { ... }, "asistencia": { ... } }'
             },
             consultas_react: [
                 '{ "tipo": "obtener_alumnos" }',

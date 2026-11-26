@@ -154,9 +154,64 @@ async function getAttendances(req, res) {
     }
 }
 
+/**
+ * POST /api/asistencias/temporizador
+ * Inicia el temporizador para cerrar el periodo de asistencia (o lo cierra de inmediato si minutos/segundos = 0)
+ */
+async function configureAttendanceTimer(req, res) {
+    try {
+        const body = req.body || {};
+        const minutos = Number(body.minutos || 0);
+        const segundos = Number(body.segundos || body.duracion || body.tiempo || 0);
+        const durationMs = minutos > 0 ? minutos * 60 * 1000 : segundos * 1000;
+
+        const resultado = await wsManager.startAttendanceTimer({
+            durationMs,
+            chatId: body.chat_id || null
+        });
+
+        return res.status(200).json({
+            success: true,
+            resultado
+        });
+    } catch (error) {
+        console.error('[attendanceController.configureAttendanceTimer] Error:', error);
+        return res.status(500).json({
+            success: false,
+            msg: 'Error al configurar el temporizador de asistencia.',
+            error: error.message
+        });
+    }
+}
+
+/**
+ * POST /api/asistencias/cerrar-periodo
+ * Cierra inmediatamente el periodo de asistencia del día y marca con 'falta' a quienes no asistieron
+ */
+async function closeAttendancePeriodNow(req, res) {
+    try {
+        const chatId = (req.body && req.body.chat_id) || null;
+        const resultado = await wsManager.executeAttendancePeriodClose(null, chatId);
+        return res.status(200).json({
+            success: true,
+            msg: 'Periodo de asistencia cerrado y faltas registradas.',
+            ...resultado
+        });
+    } catch (error) {
+        console.error('[attendanceController.closeAttendancePeriodNow] Error:', error);
+        return res.status(500).json({
+            success: false,
+            msg: 'Error al cerrar el periodo de asistencia y registrar faltas.',
+            error: error.message
+        });
+    }
+}
+
 module.exports = {
     receiveArduinoPhotoAndHold,
     getPendingPhotoForDesktop,
     verifyQrTokenAndRegisterAttendance,
+    configureAttendanceTimer,
+    closeAttendancePeriodNow,
     getAttendances
 };

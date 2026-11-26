@@ -183,7 +183,7 @@ async function linkStudentTelegramChat(numero_control, chat_id_telegram) {
 }
 
 /**
- * Obtiene el resumen de asistencias por alumno (para el comando "reporte_asistencias" del maestro)
+ * Obtiene el resumen de asistencias y faltas por alumno (para el comando "reporte_asistencias" del maestro)
  */
 async function getAttendanceSummaryByStudent() {
     const [rows] = await pool.execute(`
@@ -191,13 +191,99 @@ async function getAttendanceSummaryByStudent() {
             a.id_alumno,
             a.numero_control,
             a.nombre_completo,
-            COUNT(asist.id_asistencia) AS total
+            COALESCE(SUM(CASE WHEN asist.estado IN ('presente', 'retardo', 'justificado') THEN 1 ELSE 0 END), 0) AS total,
+            COALESCE(SUM(CASE WHEN asist.estado = 'falta' THEN 1 ELSE 0 END), 0) AS total_faltas
         FROM alumnos a
         LEFT JOIN asistencias asist ON a.id_alumno = asist.id_alumno
         GROUP BY a.id_alumno, a.numero_control, a.nombre_completo
         ORDER BY a.nombre_completo ASC
     `);
     return rows;
+}
+
+/**
+ * Marca con estado = 'falta' a todos los alumnos registrados que NO tengan
+ * ningún registro en la tabla asistencias en la fecha actual (CURRENT_DATE).
+ */
+async function markAbsencesForMissingStudentsToday() {
+    // 1. Obtener todos los alumnos registrados
+    const [alumnos] = await pool.execute(
+        'SELECT id_alumno, numero_control, nombre_completo, chat_id_telegram FROM alumnos ORDER BY id_alumno ASC'
+    );
+
+    if (alumnos.length === 0) {
+        return {
+            total_alumnos: 0,
+            total_presentes: 0,
+            total_faltas_nuevas: 0,
+            faltas_registradas: []
+        };
+    }
+
+    // 2. Obtener los registros que ya existen el día de hoy en asistencias
+    const [registrosHoy] = await pool.execute(
+        'SELECT id_alumno, estado FROM asistencias WHERE fecha = CURRENT_DATE'
+    );
+
+    const idsConRegistroHoy = new Set(registrosHoy.map((r) => Number(r.id_alumno)));
+    const totalPresentesHoy = registrosHoy.filter((r) => r.estado !== 'falta').length;
+
+    // 3. Filtrar los alumnos que no se registraron hoy
+    const alumnosFaltantes = alumnos.filter((a) => !idsConRegistroHoy.has(Number(a.id_alumno)));
+
+    if (alumnosFaltantes.length === 0) {
+        return {
+            total_alumnos: alumnos.length,
+            total_presentes: totalPresentesHoy,
+            total_faltas_nuevas: 0,
+            faltas_registradas: []
+        };
+    }
+
+    // 4. Obtener el último id_asistencia para insertar consecutivamente de 1 en 1
+    const [maxRows] = await pool.execute(
+        'SELECT COALESCE(MAX(id_asistencia), 0) AS max_id FROM asistencias'
+    );
+    let currentNextId = Number(maxRows[0].max_id) || 0;
+
+    const insertedIds = [];
+    for (const alumno of alumnosFaltantes) {
+        currentNextId += 1;
+        await pool.execute(
+            `INSERT INTO asistencias (id_asistencia, id_alumno, numero_control, fecha, hora, estado, dispositivo_origen, observaciones)
+             VALUES (?, ?, ?, CURRENT_DATE, CURRENT_TIME, 'falta', 'cierre_automatico', 'Falta por cierre de periodo de asistencia')`,
+            [currentNextId, alumno.id_alumno, alumno.numero_control]
+        );
+        insertedIds.push(currentNextId);
+    }
+
+    // 5. Recuperar las filas recién insertadas con el mismo formato que getAttendances
+    const placeholders = insertedIds.map(() => '?').join(',');
+    const [faltasRows] = await pool.execute(
+        `SELECT
+            a.id_asistencia,
+            a.id_alumno,
+            a.numero_control,
+            al.nombre_completo,
+            DATE_FORMAT(a.fecha, '%Y-%m-%d') AS fecha,
+            a.hora,
+            a.fecha_hora,
+            a.estado,
+            a.dispositivo_origen,
+            a.observaciones
+         FROM asistencias a
+         INNER JOIN alumnos al ON a.id_alumno = al.id_alumno
+         WHERE a.id_asistencia IN (${placeholders})
+         ORDER BY a.id_asistencia ASC`,
+        insertedIds
+    );
+
+    return {
+        total_alumnos: alumnos.length,
+        total_presentes: totalPresentesHoy,
+        total_faltas_nuevas: faltasRows.length,
+        faltas_registradas: faltasRows
+    };
 }
 
 /**
@@ -457,6 +543,7 @@ module.exports = {
     getStudentByTelegramChatId,
     linkStudentTelegramChat,
     getAttendanceSummaryByStudent,
+    markAbsencesForMissingStudentsToday,
     getAttendancesByStudentId,
     verifyTokenAndCreateAttendance,
     getAttendances

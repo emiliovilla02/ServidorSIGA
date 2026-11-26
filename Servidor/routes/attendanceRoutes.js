@@ -19,7 +19,11 @@ router.get('/foto-pendiente', attendanceController.getPendingPhotoForDesktop);
 //    El servidor valida contra la BD de alumnos, registra la asistencia y responde a Arduino (VERDE / ROJO)
 router.post('/verificar-qr', attendanceController.verifyQrTokenAndRegisterAttendance);
 
-// 4. Consulta general del historial de asistencias (con filtros ?fecha=YYYY-MM-DD, ?grupo=A, ?numero_control=...)
+// 4. Iniciar temporizador de cierre o cerrar inmediatamente registrando faltas a los ausentes
+router.post('/temporizador', attendanceController.configureAttendanceTimer);
+router.post('/cerrar-periodo', attendanceController.closeAttendancePeriodNow);
+
+// 5. Consulta general del historial de asistencias (con filtros ?fecha=YYYY-MM-DD, ?numero_control=...)
 router.get('/', attendanceController.getAttendances);
 
 module.exports = router;

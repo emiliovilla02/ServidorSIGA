@@ -17,6 +17,11 @@ let wss = null;
 // Sesión activa de escaneo QR (puede venir de Arduino por WebSocket o por HTTP)
 let currentScanSession = null;
 
+// Temporizador activo para el cierre del periodo de asistencia del día
+let attendanceTimerId = null;
+let attendancePeriodOpen = true;
+let attendanceClosesAt = null;
+
 /**
  * Obtiene el chat_id configurado para el Maestro en Telegram (por defecto "7155239838")
  */
@@ -226,6 +231,139 @@ function notifyStudentRegistered(alumno, notifyDesktopImmediately = true) {
         tipo: 'alumno_registrado',
         alumno
     });
+}
+
+/**
+ * Ejecuta el cierre del periodo de asistencia del día:
+ * - Marca con estado = 'falta' a todos los alumnos que no registraron asistencia hoy.
+ * - Notifica a Android (para Telegram y para que avise a Arduino por Bluetooth) y a React Web.
+ */
+async function executeAttendancePeriodClose(wsAndroid = null, chatId = null) {
+    if (attendanceTimerId) {
+        clearTimeout(attendanceTimerId);
+        attendanceTimerId = null;
+    }
+    attendancePeriodOpen = false;
+    attendanceClosesAt = null;
+
+    const resultado = await sigaService.markAbsencesForMissingStudentsToday();
+    const targetChatId = chatId || getMaestroChatId();
+
+    const listaFaltantes =
+        resultado.faltas_registradas.length > 0
+            ? resultado.faltas_registradas
+                  .map((f) => `• ${f.nombre_completo} (${f.numero_control})`)
+                  .join('\n')
+            : 'Ninguno (todos tienen registro hoy).';
+
+    const mensajeResumen =
+        `🔒 Periodo de asistencia finalizado.\n` +
+        `✅ Presentes hoy: ${resultado.total_presentes}\n` +
+        `❌ Faltas registradas: ${resultado.total_faltas_nuevas}\n\n` +
+        `Alumnos con falta:\n${listaFaltantes}`;
+
+    // 1. Notificar a Android (para Telegram y control por Bluetooth con Arduino)
+    const cierrePayload = {
+        tipo: 'periodo_asistencia_cerrado',
+        success: true,
+        activo: false,
+        msg: 'Periodo de asistencia cerrado y faltas registradas.',
+        ...resultado
+    };
+
+    if (wsAndroid && wsAndroid.readyState === WebSocket.OPEN) {
+        sendJson(wsAndroid, cierrePayload);
+    } else {
+        broadcastToModules(['android'], cierrePayload);
+    }
+
+    responderATelegram(wsAndroid, targetChatId, mensajeResumen);
+
+    // 2. Enviar cada falta registrada al Cliente Web (React) para que aparezca en vivo en la tabla
+    for (const falta of resultado.faltas_registradas) {
+        broadcastToModules(['web'], {
+            tipo: 'nueva_asistencia',
+            success: true,
+            msg: 'Falta registrada automáticamente al cerrar el periodo.',
+            alumno: {
+                id_alumno: falta.id_alumno,
+                numero_control: falta.numero_control,
+                nombre_completo: falta.nombre_completo
+            },
+            asistencia: falta
+        });
+    }
+
+    broadcastToModules(['web'], {
+        tipo: 'cierre_asistencia',
+        ...cierrePayload
+    });
+
+    console.log(
+        `[Asistencia] Periodo cerrado. Presentes: ${resultado.total_presentes}, Faltas nuevas: ${resultado.total_faltas_nuevas}`
+    );
+
+    return resultado;
+}
+
+/**
+ * Programa el temporizador para cerrar el periodo de asistencia después de N milisegundos
+ */
+async function startAttendanceTimer({ durationMs, wsAndroid = null, chatId = null }) {
+    if (attendanceTimerId) {
+        clearTimeout(attendanceTimerId);
+        attendanceTimerId = null;
+    }
+
+    attendancePeriodOpen = true;
+
+    // Si la duración es 0 o menor, cerramos inmediatamente
+    if (!durationMs || durationMs <= 0) {
+        return await executeAttendancePeriodClose(wsAndroid, chatId);
+    }
+
+    attendanceClosesAt = new Date(Date.now() + durationMs).toISOString();
+
+    attendanceTimerId = setTimeout(async () => {
+        try {
+            await executeAttendancePeriodClose(wsAndroid, chatId);
+        } catch (err) {
+            console.error('[WS/Temporizador] Error al cerrar periodo de asistencia:', err);
+        }
+    }, durationMs);
+
+    const segundosTotales = Math.round(durationMs / 1000);
+    const textoTiempo =
+        segundosTotales >= 60 && segundosTotales % 60 === 0
+            ? `${segundosTotales / 60} minuto(s)`
+            : `${segundosTotales} segundo(s)`;
+
+    const startPayload = {
+        tipo: 'temporizador_asistencia_iniciado',
+        success: true,
+        activo: true,
+        duracion_segundos: segundosTotales,
+        cierra_en: attendanceClosesAt,
+        msg: `Temporizador de asistencia iniciado por ${textoTiempo}.`
+    };
+
+    if (wsAndroid && wsAndroid.readyState === WebSocket.OPEN) {
+        sendJson(wsAndroid, startPayload);
+    } else {
+        broadcastToModules(['android'], startPayload);
+    }
+
+    if (chatId) {
+        responderATelegram(
+            wsAndroid,
+            chatId,
+            `⏱️ Periodo de asistencia abierto por ${textoTiempo}. Al finalizar se registrarán las faltas automáticamente.`
+        );
+    }
+
+    broadcastToModules(['web'], startPayload);
+    console.log(`[Asistencia] Temporizador iniciado por ${textoTiempo} (cierra: ${attendanceClosesAt})`);
+    return startPayload;
 }
 
 /**
@@ -469,7 +607,7 @@ async function handleIncomingWsMessage(ws, rawData, isBinary) {
                 break;
             }
 
-            // 1.3 MAESTRO: Reporte general de asistencias
+            // 1.3 MAESTRO: Reporte general de asistencias y faltas
             case 'reporte_asistencias': {
                 if (ws.modulo === 'desconocido') ws.modulo = 'android';
 
@@ -479,10 +617,65 @@ async function handleIncomingWsMessage(ws, rawData, isBinary) {
 
                 const rows = await sigaService.getAttendanceSummaryByStudent();
                 const reporte = rows
-                    .map((r) => `• ${r.nombre_completo} (${r.numero_control}): ${r.total} asistencias`)
+                    .map(
+                        (r) =>
+                            `• ${r.nombre_completo} (${r.numero_control}): ${r.total} asistencias | ${r.total_faltas} faltas`
+                    )
                     .join('\n');
 
                 responderATelegram(ws, chatId, `📊 Reporte de asistencias:\n\n${reporte || 'Sin datos.'}`);
+                break;
+            }
+
+            // 1.4 MAESTRO: Iniciar temporizador o cerrar periodo de asistencia y marcar faltas
+            case 'iniciar_temporizador_asistencia':
+            case 'temporizador_asistencia':
+            case 'temporizador':
+            case 'cerrar_asistencia':
+            case 'finalizar_asistencia':
+            case 'marcar_faltas': {
+                if (ws.modulo === 'desconocido') ws.modulo = 'android';
+
+                if (!esChatDeMaestro(chatId)) {
+                    return responderATelegram(
+                        ws,
+                        chatId,
+                        '⛔ Solo el maestro puede iniciar o cerrar el periodo de asistencia.'
+                    );
+                }
+
+                // Si el comando es explícitamente de cierre inmediato, duración = 0
+                if (['cerrar_asistencia', 'finalizar_asistencia', 'marcar_faltas'].includes(tipo)) {
+                    await executeAttendancePeriodClose(ws, chatId);
+                    break;
+                }
+
+                // Soportar duración en minutos, segundos o milisegundos
+                const minutos = Number(datos.minutos ?? message.minutos ?? 0);
+                const segundos = Number(
+                    datos.segundos ??
+                        message.segundos ??
+                        datos.tiempo_segundos ??
+                        datos.duracion ??
+                        datos.tiempo ??
+                        0
+                );
+                const milisegundos = Number(datos.milisegundos ?? datos.ms ?? 0);
+
+                let durationMs = 0;
+                if (milisegundos > 0) {
+                    durationMs = milisegundos;
+                } else if (minutos > 0) {
+                    durationMs = minutos * 60 * 1000;
+                } else if (segundos > 0) {
+                    durationMs = segundos * 1000;
+                }
+
+                await startAttendanceTimer({
+                    durationMs,
+                    wsAndroid: ws,
+                    chatId
+                });
                 break;
             }
 
@@ -548,7 +741,9 @@ async function handleIncomingWsMessage(ws, rawData, isBinary) {
                     );
                 }
 
-                const lista = asistencias.map((a, i) => `${i + 1}. ${a.fecha_hora}`).join('\n');
+                const lista = asistencias
+                    .map((a, i) => `${i + 1}. ${a.fecha_hora} (${a.estado === 'falta' ? '❌ Falta' : '✅ ' + a.estado})`)
+                    .join('\n');
                 responderATelegram(
                     ws,
                     chatAlumno,
@@ -848,6 +1043,9 @@ async function handleIncomingWsMessage(ws, rawData, isBinary) {
                         'eliminar_alumno',
                         'listar_alumnos',
                         'reporte_asistencias',
+                        'iniciar_temporizador_asistencia',
+                        'temporizador_asistencia',
+                        'cerrar_asistencia',
                         'vincular_alumno',
                         'consultar_asistencias',
                         'solicitar_qr',
@@ -965,6 +1163,8 @@ module.exports = {
     broadcastToModules,
     responderATelegram,
     startPhotoScanSession,
+    startAttendanceTimer,
+    executeAttendancePeriodClose,
     notifyStudentRegistered,
     notifyAttendanceResult,
     getTempPhotoInfo,
